@@ -212,8 +212,8 @@ export async function updateLastSeen(userId: string) {
 }
 
 /**
- * Deletes the currently authenticated user's account and profile data,
- * then terminates their session.
+ * Permanently deletes or resets the currently authenticated user's account and profile data,
+ * cleans up session cookies, and revokes active authentication tokens.
  */
 export async function deleteAccountAction() {
     const supabase = await createClient();
