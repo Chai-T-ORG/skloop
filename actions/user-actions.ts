@@ -226,33 +226,52 @@ export async function deleteAccountAction() {
     const userId = user.id;
 
     try {
-        // 1. Delete user record in profiles table
-        const { error: profileDeleteErr } = await supabase
-            .from("profiles")
-            .delete()
-            .eq("id", userId);
-
-        if (profileDeleteErr) {
-            console.error("deleteAccountAction profile deletion error:", profileDeleteErr);
-        }
-
-        // 2. If service role key is available, delete user from auth.users via Supabase Admin API
         const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
         if (serviceRoleKey && supabaseUrl) {
+            // 1a. Service Role Admin deletion (Deletes user from auth.users + cascades profiles)
             const adminSupabase = createAdminClient(supabaseUrl, serviceRoleKey, {
                 auth: { autoRefreshToken: false, persistSession: false },
             });
+
+            // Clean up profile row
+            await adminSupabase.from("profiles").delete().eq("id", userId);
+
+            // Delete user from Supabase Auth
             const { error: adminErr } = await adminSupabase.auth.admin.deleteUser(userId);
             if (adminErr) {
                 console.error("deleteAccountAction admin deleteUser error:", adminErr);
             }
+        } else {
+            // 1b. User JWT deletion attempt
+            const { error: profileDeleteErr } = await supabase
+                .from("profiles")
+                .delete()
+                .eq("id", userId);
+
+            if (profileDeleteErr) {
+                console.warn("Hard delete of profile failed (RLS/FK constraint), applying profile reset fallback:", profileDeleteErr.message);
+                // Fallback: Clear user profile data
+                await supabase
+                    .from("profiles")
+                    .update({
+                        full_name: "Deleted User",
+                        username: `deleted_${userId.slice(0, 8)}`,
+                        bio: null,
+                        avatar_url: null,
+                        banner_url: null,
+                        location: null,
+                        website: null,
+                    })
+                    .eq("id", userId);
+            }
         }
 
-        // 3. Sign out the user session
+        // 2. Sign out the user session
         await supabase.auth.signOut();
 
-        // 4. Clear custom cookies
+        // 3. Clear custom cookies
         const cookieStore = await cookies();
         cookieStore.delete("has_seen_onboarding");
 
@@ -263,4 +282,5 @@ export async function deleteAccountAction() {
         return { success: false, error: err.message || "Failed to delete account" };
     }
 }
+
 
