@@ -1,9 +1,11 @@
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+
 
 /**
  * Calculates user level based on XP (500 XP per level)
@@ -208,3 +210,57 @@ export async function updateLastSeen(userId: string) {
         .update({ last_seen: new Date().toISOString() })
         .eq("id", userId);
 }
+
+/**
+ * Deletes the currently authenticated user's account and profile data,
+ * then terminates their session.
+ */
+export async function deleteAccountAction() {
+    const supabase = await createClient();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+        return { success: false, error: "Unauthorized or session expired" };
+    }
+
+    const userId = user.id;
+
+    try {
+        // 1. Delete user record in profiles table
+        const { error: profileDeleteErr } = await supabase
+            .from("profiles")
+            .delete()
+            .eq("id", userId);
+
+        if (profileDeleteErr) {
+            console.error("deleteAccountAction profile deletion error:", profileDeleteErr);
+        }
+
+        // 2. If service role key is available, delete user from auth.users via Supabase Admin API
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        if (serviceRoleKey && supabaseUrl) {
+            const adminSupabase = createAdminClient(supabaseUrl, serviceRoleKey, {
+                auth: { autoRefreshToken: false, persistSession: false },
+            });
+            const { error: adminErr } = await adminSupabase.auth.admin.deleteUser(userId);
+            if (adminErr) {
+                console.error("deleteAccountAction admin deleteUser error:", adminErr);
+            }
+        }
+
+        // 3. Sign out the user session
+        await supabase.auth.signOut();
+
+        // 4. Clear custom cookies
+        const cookieStore = await cookies();
+        cookieStore.delete("has_seen_onboarding");
+
+        revalidatePath("/", "layout");
+        return { success: true };
+    } catch (err: any) {
+        console.error("deleteAccountAction error:", err);
+        return { success: false, error: err.message || "Failed to delete account" };
+    }
+}
+

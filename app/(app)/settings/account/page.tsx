@@ -6,9 +6,10 @@ import { useToast } from "@/components/ui/ToastProvider";
 import { useUser } from "@/context/UserContext";
 import { Button } from "@/components/ui/Button";
 import { Mail, KeyRound, AlertTriangle, Loader2, Check } from "lucide-react";
+import { deleteAccountAction } from "@/actions/user-actions";
 
 export default function AccountSettingsPage() {
-    const { user } = useUser();
+    const { user, profile } = useUser();
     const { toast } = useToast();
     const supabase = createClient();
 
@@ -19,6 +20,10 @@ export default function AccountSettingsPage() {
     const [isSendingReset, setIsSendingReset] = useState(false);
     const [deleteInput, setDeleteInput] = useState("");
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const targetHandle = profile?.username || user?.email?.split("@")[0] || "";
+    const expectedConfirmText = `@${targetHandle}`;
 
     const handleChangeEmail = async () => {
         if (!newEmail || !user) return;
@@ -49,6 +54,23 @@ export default function AccountSettingsPage() {
             toast(err.message || "Failed to send reset link.", "error");
         } finally {
             setIsSendingReset(false);
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        if (deleteInput.trim().toLowerCase() !== expectedConfirmText.toLowerCase()) return;
+        setIsDeleting(true);
+        try {
+            const res = await deleteAccountAction();
+            if (!res.success) {
+                throw new Error(res.error || "Failed to delete account");
+            }
+            toast("Your account has been deleted.", "success");
+            setShowDeleteModal(false);
+            window.location.href = "/login";
+        } catch (err: any) {
+            toast(err.message || "Failed to delete account.", "error");
+            setIsDeleting(false);
         }
     };
 
@@ -156,29 +178,30 @@ export default function AccountSettingsPage() {
                         </div>
                         <h3 className="text-xl font-black text-zinc-900 text-center mb-2">Delete Account</h3>
                         <p className="text-sm text-zinc-500 text-center mb-6">
-                            Type <span className="font-black text-zinc-900">@{user?.email?.split("@")[0]}</span> to confirm.
+                            Type <span className="font-black text-zinc-900">{expectedConfirmText}</span> to confirm.
                         </p>
                         <input
                             type="text"
                             value={deleteInput}
                             onChange={(e) => setDeleteInput(e.target.value)}
-                            placeholder={`@${user?.email?.split("@")[0]}`}
+                            placeholder={expectedConfirmText}
                             className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-red-200 mb-4"
                         />
                         <div className="flex gap-3">
                             <Button
                                 variant="outline"
                                 onClick={() => { setShowDeleteModal(false); setDeleteInput(""); }}
+                                disabled={isDeleting}
                                 className="flex-1 font-bold rounded-xl border-2"
                             >
                                 Cancel
                             </Button>
                             <Button
-                                disabled={deleteInput !== `@${user?.email?.split("@")[0]}`}
+                                disabled={deleteInput.trim().toLowerCase() !== expectedConfirmText.toLowerCase() || isDeleting}
                                 className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl disabled:opacity-40"
-                                onClick={() => toast("Account deletion is disabled in this build.", "error")}
+                                onClick={handleDeleteAccount}
                             >
-                                Delete
+                                {isDeleting ? <Loader2 size={16} className="animate-spin shrink-0" /> : "Delete"}
                             </Button>
                         </div>
                     </div>
@@ -187,3 +210,4 @@ export default function AccountSettingsPage() {
         </div>
     );
 }
+
